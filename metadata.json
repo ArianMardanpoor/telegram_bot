@@ -1,0 +1,6 @@
+{
+  "name": "Telegram Dating Bot Architect",
+  "description": "An interactive workspace, code explorer, and simulator for a highly scalable Telegram Dating, Matchmaking & Gamification Bot built with aiogram 3.x, FastAPI, MySQL, and Redis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

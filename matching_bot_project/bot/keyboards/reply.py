@@ -1,0 +1,36 @@
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
+
+def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
+    """Returns the primary Persian reply keyboard overlay."""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="🎯 شروع دیت یابی (Matching)")
+            ],
+            [
+                KeyboardButton(text="👤 پروفایل من"),
+                KeyboardButton(text="🎁 زیرمجموعه‌گیری & VIP")
+            ],
+            [
+                KeyboardButton(text="❔ راهنما و پشتیبانی")
+            ]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        input_field_placeholder="منوی خود را انتخاب کنید"
+    )
+    return keyboard
+
+
+def get_cancel_keyboard() -> ReplyKeyboardMarkup:
+    """Standard operation interruption Reply overlay."""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="❌ انصراف و منوی اصلی")
+            ]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
