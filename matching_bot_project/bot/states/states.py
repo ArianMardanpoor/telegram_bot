@@ -22,4 +22,6 @@ class QuestionnaireStates(StatesGroup):
 
 class ChatStates(StatesGroup):
     """FSM states managing direct anonymous routing."""
+    # CRITICAL ADDITION: Required for the mutual approval step after the 20 questions finalize
+    waiting_for_approval = State()
     anonymous_chat_active = State()

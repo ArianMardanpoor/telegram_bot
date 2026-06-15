@@ -8,11 +8,7 @@ from matching_bot_project.bot.core.loader import redis_client, bot
 
 logger = logging.getLogger(__name__)
 
-# FIX: "restricted" and "left"/"kicked" are not in this set, so they correctly block access.
-# Added "restricted" users are still channel members by Telegram's definition but have
-# limited permissions — excluding them is the safer default for a forced-join gate.
 _ALLOWED_STATUSES = {"creator", "administrator", "member"}
-
 
 class ForceJoinMiddleware(BaseMiddleware):
     """
@@ -30,18 +26,23 @@ class ForceJoinMiddleware(BaseMiddleware):
 
         user_id = event.from_user.id
 
-        # FIX: admin bypass moved BEFORE the Redis cache check.
-        # Previously, if an admin happened to have a stale/missing cache entry,
-        # the code would hit the Telegram API unnecessarily (or worse, block them
-        # if the API call failed) before reaching the admin check.
+        # 1. Admin bypass check first (zero external calls)
         if user_id in settings.parsed_admin_ids:
             return await handler(event, data)
 
         cache_key = f"user:force_join_cache:{user_id}"
-        cached_joined = await redis_client.get(cache_key)
-        if cached_joined == "1":
-            return await handler(event, data)
 
+        # 2. Safely check Redis cache
+        try:
+            cached_joined = await redis_client.get(cache_key)
+            # Handle both string and byte responses depending on redis-py configuration
+            if cached_joined in ("1", b"1"):
+                return await handler(event, data)
+        except Exception as e:
+            logger.warning("Redis GET failed in ForceJoinMiddleware for user %s: %s", user_id, e)
+            # Do not return here; fall through to the Telegram API check
+
+        # 3. Fallback to Telegram API
         try:
             member = await bot.get_chat_member(
                 chat_id=settings.REQUIRED_CHANNEL_ID,
@@ -49,22 +50,21 @@ class ForceJoinMiddleware(BaseMiddleware):
             )
 
             if member.status in _ALLOWED_STATUSES:
-                await redis_client.set(cache_key, "1", ex=600)
+                try:
+                    await redis_client.set(cache_key, "1", ex=600)
+                except Exception as e:
+                    logger.warning("Redis SET failed in ForceJoinMiddleware for user %s: %s", user_id, e)
                 return await handler(event, data)
 
         except TelegramAPIError as e:
             logger.error("ForceJoin membership lookup failed for user %s: %s", user_id, e)
-            # Fail open: if the channel is misconfigured or deleted, don't lock out all users
+            # Fail open if the channel ID is invalid or bot was kicked
             return await handler(event, data)
 
-        # User is not a member — prompt subscription and block further processing
+        # 4. Handle Unauthorized User
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📢 عضویت در کانال", url=settings.CHANNEL_INVITE_LINK)
-            ],
-            [
-                InlineKeyboardButton(text="✅ بررسی عضویت مجدد", callback_data="check_membership")
-            ]
+            [InlineKeyboardButton(text="📢 عضویت در کانال", url=settings.CHANNEL_INVITE_LINK)],
+            [InlineKeyboardButton(text="✅ بررسی عضویت مجدد", callback_data="check_membership")]
         ])
 
         alert_text = (
@@ -74,8 +74,14 @@ class ForceJoinMiddleware(BaseMiddleware):
 
         if isinstance(event, Message):
             await event.answer(text=alert_text, reply_markup=keyboard, parse_mode="Markdown")
+        
         elif isinstance(event, CallbackQuery):
-            await event.message.answer(text=alert_text, reply_markup=keyboard, parse_mode="Markdown")
-            await event.answer("نیاز به تایید عضویت!")
+            # Guard against InaccessibleMessage exceptions on old inline keyboards
+            if event.message:
+                await event.message.answer(text=alert_text, reply_markup=keyboard, parse_mode="Markdown")
+            else:
+                await bot.send_message(chat_id=user_id, text=alert_text, reply_markup=keyboard, parse_mode="Markdown")
+            
+            await event.answer("نیاز به تایید عضویت!", show_alert=True)
 
         return None

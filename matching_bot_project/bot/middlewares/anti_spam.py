@@ -1,8 +1,10 @@
+import logging
 from typing import Any, Callable, Dict, Awaitable
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
 from matching_bot_project.bot.core.loader import redis_client
 
+logger = logging.getLogger(__name__)
 
 class ThrottlingMiddleware(BaseMiddleware):
     """
@@ -25,17 +27,18 @@ class ThrottlingMiddleware(BaseMiddleware):
         user_id = event.from_user.id
         cache_key = f"throttling:{user_id}"
 
-        # FIX: replaced manual timestamp comparison with Redis SET NX (set-if-not-exists).
-        # The old approach had a race condition: two near-simultaneous requests could both
-        # read "no key" before either had written, and both would pass the throttle check.
-        # SET NX is atomic — only one request can win the write, the other is blocked.
-        # Also removed `import time` since it is no longer needed.
-        key_set = await redis_client.set(
-            cache_key,
-            "1",
-            px=int(self.limit * 1000),
-            nx=True  # Only set if key does not already exist
-        )
+        try:
+            # Atomic lock to prevent race conditions
+            key_set = await redis_client.set(
+                cache_key,
+                "1",
+                px=int(self.limit * 1000),
+                nx=True 
+            )
+        except Exception as e:
+            logger.error("Redis connection failed in ThrottlingMiddleware for user %s: %s", user_id, e)
+            # Fail open: Better to temporarily allow spam than drop all bot traffic during a Redis blip
+            return await handler(event, data)
 
         if not key_set:
             # Key already existed — user is sending too fast
