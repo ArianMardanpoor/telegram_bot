@@ -3,8 +3,8 @@ from aiogram import Router, F
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.queries import crud
-from bot.core.config import settings
+from matching_bot_project.database.queries import crud
+from matching_bot_project.bot.core.config import settings
 
 logger = logging.getLogger(__name__)
 router = Router(name="profile_handler")
@@ -20,11 +20,18 @@ async def view_user_profile(message: Message, db_session: AsyncSession):
         await message.answer("⚠️ شما هنوز ثبت نام نکرده‌اید! لطفا دکمه /start را ارسال کنید.")
         return
 
-    gender_txt = "آقا 🙋‍♂️" if user.gender == "Male" else "خانم 🙋‍♀️"
+    # FIX: added fallback for unexpected gender values instead of silently defaulting to "خانم"
+    if user.gender == "Male":
+        gender_txt = "آقا 🙋‍♂️"
+    elif user.gender == "Female":
+        gender_txt = "خانم 🙋‍♀️"
+    else:
+        gender_txt = "نامشخص ❓"
+
     vip_status = "👑 عضو VIP" if user.is_vip else "🏷️ عضو عادی"
 
     profile_card = (
-        "👤 *پروفایل کاربری همسریابی شما:*\n\n"
+        "👤 *پروفایل کاربری بلایند دیت شما:*\n\n"
         f"🆔 شناسه تلگرام: `{user.tg_id}`\n"
         f"🏷️ نام: *{user.first_name}*\n"
         f"🙋‍♂️ جنسیت: *{gender_txt}*\n"
@@ -47,15 +54,20 @@ async def view_referral_panel(message: Message, db_session: AsyncSession):
         await message.answer("⚠️ کاربری یافت نشد. لطفا /start را بزنید.")
         return
 
-    # Compile the special referral entry point URL
-    bot_name = "MatchmakingDatingBot" # Can be loaded from config file
+    # FIX: bot username loaded from settings instead of being hardcoded
+    bot_name = settings.BOT_USERNAME
     invite_link = f"https://t.me/{bot_name}?start=ref_{tg_id}"
+
+    # FIX: added referral count from DB; previously it was fetched nowhere and never shown,
+    # despite the docstring saying "total referrals" would be displayed
+    referral_count = await crud.get_referral_count(db_session, tg_id)
 
     ref_text = (
         "🎁 *سیستم کسب سهمیه رایگان مچینگ پیشرفته (VIP):*\n\n"
         "دوستان خود را به ربات همسریابی دعوت کنید و به ازای هر دعوت موفق که ثبت‌نام خود را تکمیل کند، "
         "*۱ سهمیه مچ ویژه (فیلتردار)* دریافت کنید!\n\n"
         f"🔗 *لینک اختصاصی دعوت شما:*\n`{invite_link}`\n\n"
+        f"👥 تعداد زیرمجموعه‌های فعال شما: *{referral_count} نفر*\n"
         f"🔋 تعداد مچ‌های پیشرفته باقیمانده شما: *{user.vip_quota} عدد*"
     )
 
@@ -65,6 +77,9 @@ async def view_referral_panel(message: Message, db_session: AsyncSession):
 @router.message(F.text == "❔ راهنما و پشتیبانی")
 async def view_help_panel(message: Message):
     """Displays standard FAQ and support contacts."""
+    # FIX: support username loaded from settings instead of being hardcoded as a placeholder
+    support_username = settings.SUPPORT_USERNAME
+
     help_text = (
         "❔ *راهنمای استفاده از ربات همسریابی:*\n\n"
         "1️⃣ ابتدا با منوی پروفایل مشخصات خود را دقیق تنظیم کنید.\n"
@@ -72,6 +87,6 @@ async def view_help_panel(message: Message):
         "3️⃣ سیستم به طور هوشمند و خودکار کاربران جنس مخالف نزدیک شما را پیشنهاد می‌دهد.\n"
         "4️⃣ پس از اتصال، باید در مسابقه پرسشنامه ۲۰ سوالی تفاهم‌سنجی شرکت کنید.\n"
         "5️⃣ در صورتی که پاسخ‌های شما و پارتنر مشترک تایید شود، سیستم چت ناشناس امن را برقرار می‌سازد.\n\n"
-        "📌 *پشتیبانی ربات:* @your_support_id"
+        f"📌 *پشتیبانی ربات:* @{support_username}"
     )
     await message.answer(text=help_text, parse_mode="Markdown")

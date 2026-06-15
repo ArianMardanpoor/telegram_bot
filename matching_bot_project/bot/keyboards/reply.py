@@ -3,7 +3,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
     """Returns the primary Persian reply keyboard overlay."""
-    keyboard = ReplyKeyboardMarkup(
+    return ReplyKeyboardMarkup(
         keyboard=[
             [
                 KeyboardButton(text="🎯 شروع دیت یابی (Matching)")
@@ -20,17 +20,18 @@ def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
         one_time_keyboard=False,
         input_field_placeholder="منوی خود را انتخاب کنید"
     )
-    return keyboard
 
 
 def get_cancel_keyboard() -> ReplyKeyboardMarkup:
     """Standard operation interruption Reply overlay."""
-    keyboard = ReplyKeyboardMarkup(
+    return ReplyKeyboardMarkup(
         keyboard=[
             [
                 KeyboardButton(text="❌ انصراف و منوی اصلی")
             ]
         ],
-        resize_keyboard=True
+        resize_keyboard=True,
+        # FIX: added input_field_placeholder so the user sees a contextual hint
+        # instead of the default Telegram placeholder while waiting in queue
+        input_field_placeholder="در صف انتظار..."
     )
-    return keyboard

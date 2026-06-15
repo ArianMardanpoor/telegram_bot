@@ -3,16 +3,21 @@ from typing import Any, Callable, Dict, Awaitable
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramAPIError
-from bot.core.config import settings
-from bot.core.loader import redis_client, bot
+from matching_bot_project.bot.core.config import settings
+from matching_bot_project.bot.core.loader import redis_client, bot
 
 logger = logging.getLogger(__name__)
+
+# FIX: "restricted" and "left"/"kicked" are not in this set, so they correctly block access.
+# Added "restricted" users are still channel members by Telegram's definition but have
+# limited permissions — excluding them is the safer default for a forced-join gate.
+_ALLOWED_STATUSES = {"creator", "administrator", "member"}
 
 
 class ForceJoinMiddleware(BaseMiddleware):
     """
     Enforces subscription to a mandatory Telegram channel.
-    Caches successful controls in Redis (10 minutes TTL) to bypass Telegram API rate limit errors.
+    Caches successful checks in Redis (10 minutes TTL) to reduce Telegram API calls.
     """
     async def __call__(
         self,
@@ -20,41 +25,39 @@ class ForceJoinMiddleware(BaseMiddleware):
         event: Message | CallbackQuery,
         data: Dict[str, Any]
     ) -> Any:
-        # Ignore events without a sender
         if not event.from_user:
             return await handler(event, data)
 
         user_id = event.from_user.id
+
+        # FIX: admin bypass moved BEFORE the Redis cache check.
+        # Previously, if an admin happened to have a stale/missing cache entry,
+        # the code would hit the Telegram API unnecessarily (or worse, block them
+        # if the API call failed) before reaching the admin check.
+        if user_id in settings.parsed_admin_ids:
+            return await handler(event, data)
+
         cache_key = f"user:force_join_cache:{user_id}"
-        
-        # Check if user is cached as registered/joined
         cached_joined = await redis_client.get(cache_key)
         if cached_joined == "1":
             return await handler(event, data)
 
-        # Skip checks for bot admins
-        if user_id in settings.parsed_admin_ids:
-            return await handler(event, data)
-
-        # Check membership status live via Bot API
         try:
             member = await bot.get_chat_member(
-                chat_id=settings.REQUIRED_CHANNEL_ID, 
+                chat_id=settings.REQUIRED_CHANNEL_ID,
                 user_id=user_id
             )
-            
-            # Approved statuses: creator, administrator, member
-            if member.status in ["creator", "administrator", "member"]:
-                # Save status in Redis cache for 10 mins (600 seconds)
+
+            if member.status in _ALLOWED_STATUSES:
                 await redis_client.set(cache_key, "1", ex=600)
                 return await handler(event, data)
-                
+
         except TelegramAPIError as e:
-            logger.error(f"Force Join membership lookup error for user ID {user_id}: {str(e)}")
-            # Fail silently to user if channel is inaccessible/deleted, allowing continued access
+            logger.error("ForceJoin membership lookup failed for user %s: %s", user_id, e)
+            # Fail open: if the channel is misconfigured or deleted, don't lock out all users
             return await handler(event, data)
 
-        # Prompt subscription and halt standard message process if not a member
+        # User is not a member — prompt subscription and block further processing
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="📢 عضویت در کانال", url=settings.CHANNEL_INVITE_LINK)
@@ -74,5 +77,5 @@ class ForceJoinMiddleware(BaseMiddleware):
         elif isinstance(event, CallbackQuery):
             await event.message.answer(text=alert_text, reply_markup=keyboard, parse_mode="Markdown")
             await event.answer("نیاز به تایید عضویت!")
-            
-        return None # Prevent event from reaching handlers
+
+        return None

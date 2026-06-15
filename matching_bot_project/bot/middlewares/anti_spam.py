@@ -1,8 +1,7 @@
-import time
 from typing import Any, Callable, Dict, Awaitable
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
-from bot.core.loader import redis_client
+from matching_bot_project.bot.core.loader import redis_client
 
 
 class ThrottlingMiddleware(BaseMiddleware):
@@ -25,19 +24,23 @@ class ThrottlingMiddleware(BaseMiddleware):
 
         user_id = event.from_user.id
         cache_key = f"throttling:{user_id}"
-        
-        # Check if user has sent a message too recently
-        last_message_time = await redis_client.get(cache_key)
-        now = time.time()
-        
-        if last_message_time:
-            time_diff = now - float(last_message_time)
-            if time_diff < self.limit:
-                # Discard user message without notice
-                if isinstance(event, CallbackQuery):
-                    await event.answer("⚠️ لطفا اسپم نکنید! کمی صبور باشید.", show_alert=True)
-                return None
-        
-        # Save timestamp
-        await redis_client.set(cache_key, str(now), px=int(self.limit * 1000))
+
+        # FIX: replaced manual timestamp comparison with Redis SET NX (set-if-not-exists).
+        # The old approach had a race condition: two near-simultaneous requests could both
+        # read "no key" before either had written, and both would pass the throttle check.
+        # SET NX is atomic — only one request can win the write, the other is blocked.
+        # Also removed `import time` since it is no longer needed.
+        key_set = await redis_client.set(
+            cache_key,
+            "1",
+            px=int(self.limit * 1000),
+            nx=True  # Only set if key does not already exist
+        )
+
+        if not key_set:
+            # Key already existed — user is sending too fast
+            if isinstance(event, CallbackQuery):
+                await event.answer("⚠️ لطفا اسپم نکنید! کمی صبور باشید.", show_alert=True)
+            return None
+
         return await handler(event, data)
